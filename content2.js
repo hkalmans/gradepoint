@@ -190,16 +190,20 @@ function addColumnToTableProffesor() {
     const courseName = (header.childNodes[0].nodeValue.replace(/\s+/g, " "));
     // Table exists
     // Add the column to the table
+    let avgGpaColumnExists = false;
+
     tables.forEach(table => {
         // Check if AVG. GPA column exists
         const headerRow = table.querySelector("thead tr");
         const headerCells = headerRow.querySelectorAll("th");
-        let avgGpaColumnExists = false;
 
         // Iterate through header cells to find Instructor GPA column
         for (const headerCell of headerCells) {
-            if (headerCell.innerText === "Instructor GPA") {
+            console.log(headerCell.innerText)
+            if (headerCell.innerText.toLowerCase() === "instructor gpa") {
                 avgGpaColumnExists = true;
+            } else {
+                console.log("Instructor GPA not found")
             }
         }
 
@@ -305,7 +309,14 @@ function appendRMP() {
             clearInterval(profInterval);
             // console.log('Prof names found:', professorLinks);
             professorLinks.forEach(async (link) => {
-                const professorName = link.textContent;
+                let professorName = link.textContent;
+                // if professor name includes a middle name (e.g. "John A. Smith"), remove it so it is only John Smith
+                if (professorName.split(' ').length > 2) {
+                    const professorNameSplit = professorName.split(' ');
+                    professorNameSplit.splice(1, 1);
+                    professorName = professorNameSplit.join(' ');
+                }
+                console.log('Professor name:', professorName)
                 try {
                     const port = chrome.runtime.connect({ name: 'professor-rating' });
                     port.postMessage({ professorName });
