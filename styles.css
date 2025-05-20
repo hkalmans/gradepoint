@@ -20,3 +20,28 @@
 .show-gpa {
     color: white !important;
 }
+
+/* Styling for the Download Schedule button */
+.download-schedule-btn {
+    margin-top: 10px; /* Adds some space above the button */
+    margin-bottom: 10px; /* Adds some space below the button */
+    padding: 8px 12px; /* Adjust padding for a comfortable size */
+    font-size: 14px; /* Example font size, adjust if needed */
+    /* If Bootstrap is not reliably present, you might want to add
+       more explicit styling here, e.g.:
+       background-color: #007bff;
+       color: white;
+       border: 1px solid #007bff;
+       border-radius: 4px;
+       cursor: pointer;
+       text-decoration: none;
+    */
+}
+
+/* Optional: Hover effect if not using Bootstrap or to override */
+.download-schedule-btn:hover {
+    /* Example hover effect:
+       background-color: #0056b3;
+       border-color: #0056b3;
+    */
+}

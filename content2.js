@@ -361,6 +361,293 @@ appendRMP();
 // call the function when the URL hash changes
 window.addEventListener('hashchange', appendRMP, false);
 
+// Function to parse schedule data and prepare for ICS generation
+function parseScheduleAndGenerateICS() {
+    console.log('Download schedule button clicked');
+
+    const tableElement = document.querySelector(".table.table-striped.table-borderless");
+    if (!tableElement) {
+        console.error('Schedule table not found for ICS generation.');
+        return;
+    }
+
+    const scheduleEvents = [];
+    const rows = tableElement.querySelectorAll("tbody tr");
+
+    rows.forEach(row => {
+        let courseName = '';
+        const courseLinkElement = row.querySelector("th a"); // Used in addColumnToTable
+        if (courseLinkElement) {
+            courseName = courseLinkElement.textContent;
+        } else if (row.cells && row.cells[1]) { // Fallback: often course name is in the second cell
+            courseName = row.cells[1].textContent;
+        } else if (row.cells && row.cells[0]) { // Fallback: or the first if no 'th a'
+            courseName = row.cells[0].textContent;
+        }
+
+
+        // Adjusted indices based on common university schedule table layouts
+        // These are guesses and might need verification with the actual table structure.
+        // Example: CRN | Course | Title | Credits | Days | Time | Location | Instructor
+        // row.cells[0] = CRN/Checkbox
+        // row.cells[1] = Course (e.g. CS 101) - Covered by courseName logic above
+        // row.cells[2] = Title (e.g. Intro to CS)
+        // row.cells[3] = Credits
+        // row.cells[4] = Days (e.g. MWF)
+        // row.cells[5] = Time (e.g. 10:00 AM - 10:50 AM) -> Needs splitting
+        // row.cells[6] = Location
+        // row.cells[7] = Instructor
+
+        const daysCell = row.cells && row.cells[4] ? row.cells[4].textContent : '';
+        const timeCell = row.cells && row.cells[5] ? row.cells[5].textContent : '';
+        const locationCell = row.cells && row.cells[6] ? row.cells[6].textContent : '';
+        const instructorCell = row.cells && row.cells[7] ? row.cells[7].textContent : ''; // Adjusted index
+
+        let startTime = '';
+        let endTime = '';
+
+        if (timeCell.includes('-')) {
+            [startTime, endTime] = timeCell.split('-').map(s => s.trim());
+        }
+
+        if (courseName && daysCell && startTime && endTime) {
+            scheduleEvents.push({
+                name: courseName.trim(),
+                days: daysCell.trim(), // Will need further processing for RRULE
+                startTime: startTime.trim(),
+                endTime: endTime.trim(),
+                location: locationCell ? locationCell.trim() : '',
+                instructor: instructorCell ? instructorCell.trim() : ''
+            });
+        }
+    });
+
+    console.log(scheduleEvents);
+    const icsData = generateICSContent(scheduleEvents);
+    if (icsData) { // Ensure icsData is not null or empty before attempting download
+        downloadICSFile(icsData, 'schedule.ics');
+    } else {
+        console.error('ICS data generation failed. Download cancelled.');
+    }
+}
+
+// Function to trigger browser download for ICS file
+function downloadICSFile(icsData, filename) {
+    const link = document.createElement('a');
+    link.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(icsData);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    console.log(filename + ' download initiated.');
+}
+
+// Helper function to map day abbreviations to iCalendar BYDAY format
+function mapDayAbbreviation(dayStr) {
+    if (!dayStr) return "";
+    const dayMappings = {
+        "M": "MO", "TU": "TU", "W": "WE", "TH": "TH", "F": "FR", "SA": "SA", "SU": "SU"
+    };
+    // Normalize common longer abbreviations and handle case-insensitivity
+    const normalizedDayStr = dayStr.toUpperCase()
+                                .replace(/TUE/g, "TU")
+                                .replace(/THUR/g, "TH")
+                                .replace(/SAT/g, "SA")
+                                .replace(/SUN/g, "SU");
+
+    let icsDays = [];
+    let currentDay = "";
+    for (let i = 0; i < normalizedDayStr.length; i++) {
+        currentDay += normalizedDayStr[i];
+        if (dayMappings[currentDay]) {
+            icsDays.push(dayMappings[currentDay]);
+            currentDay = "";
+        } else if (currentDay === "T" && i + 1 < normalizedDayStr.length && normalizedDayStr[i+1] === "H") {
+            // Look ahead for TH
+            continue;
+        } else if (!Object.keys(dayMappings).some(k => k.startsWith(currentDay))) {
+            // If currentDay is not a prefix of any key, reset (error/unknown path)
+            currentDay = ""; 
+        }
+    }
+    return icsDays.join(',');
+}
+
+// Helper function to parse time string (e.g., "10:30 AM") into 24-hour format object
+function parseTime(timeStr) {
+    if (!timeStr) return null;
+    const timeParts = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!timeParts) return null;
+
+    let hours = parseInt(timeParts[1]);
+    const minutes = parseInt(timeParts[2]);
+    const period = timeParts[3].toUpperCase();
+
+    if (period === 'PM' && hours !== 12) {
+        hours += 12;
+    } else if (period === 'AM' && hours === 12) { // Midnight case
+        hours = 0;
+    }
+    return { hours, minutes };
+}
+
+// Helper function to get the date of the first occurrence of a class meeting
+function getFirstEventDate(eventDays, eventStartTimeStr) {
+    const dayMap = { "SU": 0, "MO": 1, "TU": 2, "WE": 3, "TH": 4, "FR": 5, "SA": 6 };
+    const icsDays = mapDayAbbreviation(eventDays).split(','); // ["MO", "WE", "FR"]
+    if (!icsDays.length) return null;
+
+    const { hours: startHours, minutes: startMinutes } = parseTime(eventStartTimeStr);
+
+    const now = new Date();
+    let firstEventDate = null;
+
+    for (let i = 0; i < 7; i++) { // Check the next 7 days
+        const potentialDate = new Date(now);
+        potentialDate.setDate(now.getDate() + i);
+        potentialDate.setHours(startHours, startMinutes, 0, 0);
+
+        const currentDayNumeric = potentialDate.getDay(); // 0 for Sunday, 1 for Monday...
+
+        if (icsDays.some(d => dayMap[d] === currentDayNumeric)) {
+            // If this potential date is today, ensure it hasn't passed yet
+            if (i === 0 && potentialDate < now) {
+                continue; // This day's time has passed, look for the next occurrence
+            }
+            firstEventDate = potentialDate;
+            break;
+        }
+    }
+    
+    // If all event days in the current week have passed, find the earliest day in the next week.
+    if (!firstEventDate) {
+        const earliestIcsDay = icsDays.sort((a, b) => dayMap[a] - dayMap[b])[0];
+        const earliestDayNumeric = dayMap[earliestIcsDay];
+        
+        const futureDate = new Date(now);
+        futureDate.setDate(now.getDate() + ( (earliestDayNumeric - now.getDay() + 7) % 7 ) );
+        if (futureDate <= now && !(futureDate.getDay() === now.getDay() && futureDate > now) ) { // if it's today but time passed, or earlier day of week
+             futureDate.setDate(futureDate.getDate() + 7); // Move to next week
+        }
+        futureDate.setHours(startHours, startMinutes, 0, 0);
+        firstEventDate = futureDate;
+    }
+
+
+    return firstEventDate;
+}
+
+
+// Function to generate ICS content string
+function generateICSContent(scheduleEvents) {
+    let icsString = "";
+    icsString += "BEGIN:VCALENDAR\r\n";
+    icsString += "VERSION:2.0\r\n";
+    icsString += "PRODID:-//GradePoint MyPlan Extension//EN\r\n";
+    icsString += "CALSCALE:GREGORIAN\r\n";
+
+    const formatDateToICS = (dateObj) => {
+        return dateObj.toISOString().replace(/[-:.]/g, "").substring(0, 15) + "Z";
+    };
+
+    scheduleEvents.forEach(event => {
+        const uid = Date.now() + Math.random().toString(16).substring(2) + "@myplan.uw.edu";
+        const dtStamp = formatDateToICS(new Date());
+        const summary = event.name;
+        const location = event.location;
+        const description = event.instructor ? "Instructor: " + event.instructor : "";
+
+        const firstEventStartDate = getFirstEventDate(event.days, event.startTime);
+        if (!firstEventStartDate) {
+            console.warn("Could not determine first event date for:", event);
+            return; // Skip this event if we can't find its start date
+        }
+
+        const startTimeObj = parseTime(event.startTime);
+        const endTimeObj = parseTime(event.endTime);
+
+        if (!startTimeObj || !endTimeObj) {
+            console.warn("Could not parse time for event:", event);
+            return; // Skip if times are invalid
+        }
+
+        const dtStart = new Date(firstEventStartDate);
+        dtStart.setHours(startTimeObj.hours, startTimeObj.minutes, 0, 0);
+
+        const dtEnd = new Date(firstEventStartDate); // Start with the same date
+        dtEnd.setHours(endTimeObj.hours, endTimeObj.minutes, 0, 0);
+        
+        // Handle cases where end time is on the next day (e.g. evening classes)
+        // This basic logic assumes end time is always on the same day as start time or just after midnight.
+        // For simple university schedules, this is usually fine.
+        if (dtEnd < dtStart) {
+            dtEnd.setDate(dtEnd.getDate() + 1);
+        }
+
+        const dtStartString = formatDateToICS(dtStart);
+        const dtEndString = formatDateToICS(dtEnd);
+
+        const untilDate = new Date(dtStart);
+        untilDate.setDate(untilDate.getDate() + (12 * 7)); // 12 weeks
+        const untilDateString = formatDateToICS(untilDate);
+
+        const rrule = `RRULE:FREQ=WEEKLY;BYDAY=${mapDayAbbreviation(event.days)};UNTIL=${untilDateString}`;
+
+        icsString += "BEGIN:VEVENT\r\n";
+        icsString += "UID:" + uid + "\r\n";
+        icsString += "DTSTAMP:" + dtStamp + "\r\n";
+        icsString += "DTSTART:" + dtStartString + "\r\n";
+        icsString += "DTEND:" + dtEndString + "\r\n";
+        icsString += "SUMMARY:" + summary + "\r\n";
+        if (location) icsString += "LOCATION:" + location + "\r\n";
+        if (description) icsString += "DESCRIPTION:" + description + "\r\n";
+        icsString += rrule + "\r\n";
+        icsString += "END:VEVENT\r\n";
+    });
+
+    icsString += "END:VCALENDAR\r\n";
+    return icsString;
+}
+
+
+// Function to add "Download Schedule (.ics)" button
+function addDownloadScheduleButton() {
+    // Check if the button already exists
+    if (document.getElementById('downloadScheduleICS')) {
+        return;
+    }
+
+    // Attempt to find the main schedule table
+    const tableElement = document.querySelector(".table.table-striped.table-borderless");
+
+    // If table is not found, retry after 1000ms
+    if (!tableElement) {
+        setTimeout(addDownloadScheduleButton, 1000);
+        return;
+    }
+
+    // Create the download button
+    const downloadButton = document.createElement('button');
+    downloadButton.textContent = 'Download Schedule (.ics)';
+    downloadButton.id = 'downloadScheduleICS';
+    downloadButton.className = 'btn btn-primary download-schedule-btn'; // Optional styling
+
+    // Add event listener for parsing and generating ICS file
+    downloadButton.addEventListener('click', parseScheduleAndGenerateICS);
+
+    // Insert the button before the table
+    if (tableElement.parentNode) {
+        tableElement.parentNode.insertBefore(downloadButton, tableElement);
+    } else {
+        // As a fallback, append to body if parentNode is somehow null, though unlikely for a table
+        console.warn("Could not find parent node of the table to insert download button. Appending to body as a fallback.");
+        document.body.insertBefore(downloadButton, document.body.firstChild); // Or some other prominent place
+    }
+}
+
+// Call the new function to add the download button
+addDownloadScheduleButton();
+
 function insertRating(link, avgRating) {
     link.insertAdjacentHTML('afterend', `<div class="rating"><b>Rating:</b> ${avgRating}/5</div>`);
 }
