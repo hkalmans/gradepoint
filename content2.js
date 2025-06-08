@@ -190,10 +190,9 @@ function addColumnToTableProffesor() {
     const courseName = (header.childNodes[0].nodeValue.replace(/\s+/g, " "));
     // Table exists
     // Add the column to the table
-    let avgGpaColumnExists = false;
-
     tables.forEach(table => {
-        // Check if AVG. GPA column exists
+        let avgGpaColumnExists = false;
+        // Check if AVG. GPA column exists for this table
         const headerRow = table.querySelector("thead tr");
         const headerCells = headerRow.querySelectorAll("th");
 
@@ -202,6 +201,7 @@ function addColumnToTableProffesor() {
             console.log(headerCell.innerText)
             if (headerCell.innerText.toLowerCase() === "instructor gpa") {
                 avgGpaColumnExists = true;
+                break;
             } else {
                 console.log("Instructor GPA not found")
             }
