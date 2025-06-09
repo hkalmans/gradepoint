@@ -1,5 +1,4 @@
 // Initialize variables
-let alreadyListening = false;
 let lastCourseCodes = [];
 
 // Main function to add column to table [For main course search]
@@ -393,3 +392,95 @@ function insertNoProfError(link, professorName) {
         )}'>Click to Search RMP</a></div>`
     );
 }
+
+// --- iCalendar Export Feature ---
+function initScheduleIcs() {
+    // check if schedule table exists and button not already added
+    const table = document.querySelector('#schedule-table, .schedule-table');
+    if (!table || document.getElementById('download-ics-btn')) {
+        setTimeout(initScheduleIcs, 1000);
+        return;
+    }
+
+    const btn = document.createElement('button');
+    btn.id = 'download-ics-btn';
+    btn.textContent = 'Download Schedule (.ics)';
+    btn.addEventListener('click', downloadIcs);
+    table.parentNode.insertBefore(btn, table);
+}
+
+function downloadIcs() {
+    const ics = generateIcsFromSchedule();
+    if (!ics) return;
+    const blob = new Blob([ics], { type: 'text/calendar' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'schedule.ics';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function generateIcsFromSchedule() {
+    const table = document.querySelector('#schedule-table, .schedule-table');
+    if (!table) return '';
+    const rows = table.querySelectorAll('tbody tr');
+    let events = '';
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('th,td');
+        if (cells.length < 4) return;
+        const course = cells[0].innerText.trim();
+        const days = cells[1].innerText.trim();
+        const time = cells[2].innerText.trim();
+        const dates = cells[cells.length - 1].innerText.trim();
+        const location = cells.length > 4 ? cells[3].innerText.trim() : '';
+        const evt = createVevent(course, days, time, dates, location);
+        if (evt) events += evt;
+    });
+    return `BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//GradePoint//Schedule Export//EN\n${events}END:VCALENDAR`;
+}
+
+function createVevent(course, daysStr, timeRange, dateRange, location) {
+    const matchTime = timeRange.match(/(\d{1,2}:\d{2})\s*(AM|PM)\s*-\s*(\d{1,2}:\d{2})\s*(AM|PM)/i);
+    const matchDates = dateRange.match(/(\d{1,2}\/\d{1,2}\/\d{2,4}).*(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+    if (!matchTime || !matchDates) return '';
+    const startDate = parseDate(matchDates[1]);
+    const endDate = parseDate(matchDates[2]);
+    const start = parseTime(startDate, matchTime[1], matchTime[2]);
+    const end = parseTime(startDate, matchTime[3], matchTime[4]);
+    const until = formatDateTime(new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59));
+    const bydays = parseDays(daysStr).join(',');
+    const dtStart = formatDateTime(start);
+    const dtEnd = formatDateTime(end);
+    return `BEGIN:VEVENT\nSUMMARY:${course}\nDTSTART;TZID=America/Los_Angeles:${dtStart}\nDTEND;TZID=America/Los_Angeles:${dtEnd}\nRRULE:FREQ=WEEKLY;BYDAY=${bydays};UNTIL=${until}\nLOCATION:${location}\nEND:VEVENT\n`;
+}
+
+function parseDate(str) {
+    const [m,d,y] = str.split(/[\/\-]/).map(n => parseInt(n,10));
+    return new Date(y < 100 ? 2000 + y : y, m - 1, d);
+}
+
+function parseTime(date, time, ampm) {
+    let [h,mi] = time.split(':').map(n => parseInt(n,10));
+    if (ampm.toUpperCase() === 'PM' && h !== 12) h += 12;
+    if (ampm.toUpperCase() === 'AM' && h === 12) h = 0;
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), h, mi, 0);
+}
+
+function formatDateTime(d) {
+    const p = n => n.toString().padStart(2,'0');
+    return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}00`;
+}
+
+function parseDays(str) {
+    const map = [ ['Th','TH'], ['Su','SU'], ['Sat','SA'], ['M','MO'], ['T','TU'], ['W','WE'], ['F','FR'] ];
+    const days = [];
+    map.forEach(([k,v]) => { if (str.includes(k)) days.push(v); });
+    return days;
+}
+
+// Initialize ICS button on load and hash change
+initScheduleIcs();
+window.addEventListener('hashchange', initScheduleIcs, false);
